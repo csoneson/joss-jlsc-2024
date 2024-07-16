@@ -10,6 +10,7 @@ format:
         code-fold: true
         embed-resources: true
         keep-md: true
+        fig-dpi: 600
 params:
     pull_data: false
 ---
@@ -636,7 +637,7 @@ plot_grid(gg1, gg2, ncol = 1, rel_heights = c(3.3, 0.7))
 ```{r}
 #| label: fig3
 #| fig.width: 12
-#| fig.height: 5
+#| fig.height: 5.5
 #| message: false
 #| dev: ["png", "pdf"]
 
