@@ -1,0 +1,687 @@
+---
+title: "The Journal of Open Source Software (JOSS)"
+subtitle: "Bringing open source software practices to the scholarly publishing community for authors, reviewers, editors, and publishers"
+date: today
+format: 
+    html:
+        theme: united
+        toc: true
+        toc_float: true
+        code-fold: true
+        embed-resources: true
+        keep-md: true
+params:
+    pull_data: false
+---
+
+# Introduction
+
+This report contains the code for generating figures and numbers presented in 
+
+> Diehl et al (2024): The Journal of Open Source Software (JOSS) - Bringing open source software practices to the scholarly publishing community for authors, reviewers, editors, and publishers
+
+# Load packages
+
+We first load the R packages that are needed for the analysis and plotting. 
+
+```{r}
+#| label: load-packages
+
+suppressPackageStartupMessages({
+    library(ggplot2)
+    library(dplyr)
+    library(tidyr)
+    library(cowplot)
+    library(ggridges)
+    library(lubridate)
+    library(kableExtra)
+    library(patchwork)
+    library(purrr)
+    library(gh)
+    library(openalexR)
+})
+```
+
+# Read data
+
+Next, we download the data from 
+[https://www.theoj.org/joss-analytics/joss-submission-analytics.html](https://www.theoj.org/joss-analytics/joss-submission-analytics.html).
+
+```{r}
+#| label: read-data
+
+if (params$pull_data) {
+    papers <- readRDS(gzcon(url("https://github.com/openjournals/joss-analytics/blob/gh-pages/joss_submission_analytics.rds?raw=true")))
+    saveRDS(papers, file = "papers.rds")
+}
+papers <- readRDS("papers.rds")
+```
+
+# Create summary tables
+
+For easier plotting later, we create several summary tables. 
+
+```{r}
+#| label: make-summary-tables
+
+## Generate publication month and year, remove two retracted papers
+papers <- papers |>
+    dplyr::mutate(pubmonth = lubridate::floor_date(published.date, "month"),
+                  pubyear = factor(lubridate::year(published.date))) |>
+    dplyr::filter(api_state != "retracted")
+
+## Monthly summary - number of papers
+summarydf_month <- papers |>
+    dplyr::group_by(pubmonth) |>
+    dplyr::summarize(npub = n(), 
+                     pubyear = unique(lubridate::year(published.date)),
+                     .groups = "drop")
+
+## Yearly summary - number of papers, editors and reviewers
+summarydf_year <- papers |>
+    dplyr::group_by(pubyear) |>
+    dplyr::summarize(npub = n(), 
+                     .groups = "drop") |>
+    dplyr::full_join(
+        ## editors
+        papers |> 
+            dplyr::select(pubyear, editor) |>
+            tidyr::separate_longer_delim(editor, delim = ",") |>
+            dplyr::group_by(pubyear) |>
+            dplyr::summarize(nbr_editors = length(unique(editor)), 
+                             .groups = "drop"),
+        by = join_by(pubyear)
+    ) |>
+    dplyr::full_join(
+        ## new editors
+        papers |> 
+            dplyr::select(pubyear, editor) |>
+            tidyr::separate_longer_delim(editor, delim = ",") |>
+            dplyr::arrange(pubyear) |>
+            dplyr::filter(!duplicated(editor)) |>
+            dplyr::group_by(pubyear) |>
+            dplyr::summarize(nbr_new_editors = length(unique(editor)), 
+                             .groups = "drop") ,
+        by = join_by(pubyear)
+    ) |>
+    dplyr::full_join(
+        ## reviewers
+        papers |> 
+            dplyr::select(pubyear, reviewers) |>
+            tidyr::separate_longer_delim(reviewers, delim = ",") |>
+            dplyr::group_by(pubyear) |>
+            dplyr::summarize(nbr_reviewers = length(unique(reviewers)),
+                             nbr_reviews = length(reviewers),
+                             .groups = "drop"),
+        by = join_by(pubyear)
+    ) |>
+    dplyr::full_join(
+        ## new reviewers
+        papers |> 
+            dplyr::select(pubyear, reviewers) |>
+            tidyr::separate_longer_delim(reviewers, delim = ",") |>
+            dplyr::arrange(pubyear) |> 
+            dplyr::filter(!duplicated(reviewers)) |>
+            dplyr::group_by(pubyear) |>
+            dplyr::summarize(nbr_new_reviewers = length(unique(reviewers)),
+                             .groups = "drop"),
+        by = join_by(pubyear)
+    ) |>
+    dplyr::mutate(frac_new_editors = scales::percent(nbr_new_editors/nbr_editors, 
+                                                     accuracy = 0.01),
+                  frac_new_reviewers = scales::percent(nbr_new_reviewers/nbr_reviewers,
+                                                       accuracy = 0.01))
+
+## Total reviewer/editor counts
+tot_nbr_editors <- papers |>
+    dplyr::select(editor) |>
+    tidyr::separate_longer_delim(editor, delim = ",") |>
+    dplyr::pull(editor) |>
+    unique() |>
+    length()
+
+tot_nbr_reviewers <- papers |>
+    dplyr::select(reviewers) |>
+    tidyr::separate_longer_delim(reviewers, delim = ",") |>
+    dplyr::pull(reviewers) |>
+    unique() |>
+    length()
+```
+
+## Monthly summary
+
+```{r}
+#| label: dt-month
+
+DT::datatable(summarydf_month, 
+              escape = FALSE, rownames = FALSE, 
+              filter = list(position = 'top', clear = FALSE),
+              options = list(scrollX = TRUE))
+```
+
+## Yearly summary
+
+```{r}
+#| label: dt-year
+
+DT::datatable(summarydf_year,
+              escape = FALSE, rownames = FALSE, 
+              filter = list(position = 'top', clear = FALSE),
+              options = list(scrollX = TRUE))
+```
+
+
+# Define color palette
+
+```{r}
+#| label: define-colors
+
+## Years
+yearcols <- c("#FF0066FF", "#328C97FF", "#D1AAC2FF", "#B3E0BFFF",
+              "#DB7003FF", "#F8C1A6FF", "#A30000FF", "#97D1D9FF", "#916C37FF")
+names(yearcols) <- as.character(2016:2024)
+```
+
+# Number of papers published per month
+
+The figure below shows the number of papers published each month. The overlaid
+curve represents a loess fit to the monthly data, generated using the `ggplot2`
+package. 
+
+```{r}
+#| fig.width: 9
+#| fig.height: 6
+#| message: false
+#| label: plot-papers-per-month
+#| dev: ["png", "pdf"]
+
+(gg_nbrpapers <- ggplot(summarydf_month, 
+                        aes(x = factor(pubmonth), y = npub)) + 
+     geom_col(aes(fill = as.character(pubyear))) + 
+     geom_smooth(aes(x = as.numeric(factor(pubmonth))), method = "loess", 
+                 se = FALSE, color = "black") + 
+     labs(x = "Publication month", y = "Number of published\npapers per month") + 
+     scale_y_continuous(expand = c(0, 0)) + 
+     scale_fill_manual(name = "Year", values = yearcols) + 
+     guides(fill = guide_legend(nrow = 1, byrow = TRUE, 
+                                title = "Publication year")) + 
+     theme_cowplot() + 
+     theme(axis.title = element_text(size = 15),
+           axis.text.x = element_blank(),
+           axis.ticks.x = element_blank(), 
+           legend.position = "bottom",
+           legend.justification = "right",
+           legend.margin = margin(1, 10, 1, 1)))
+```
+
+# Number of editors per year
+
+The next figure shows the number of editors that accept at least one paper in 
+a given year, as well as the total number of editors that have accepted at 
+least one paper overall. Note that the data from 2024 only include papers 
+published until `r max(papers$published.date)`.
+
+```{r}
+#| label: plot-editors-per-year
+#| dev: ["png", "pdf"]
+
+(gg_nbreditors <- ggplot(summarydf_year,
+                         aes(x = pubyear, y = nbr_editors, fill = pubyear)) + 
+     scale_fill_manual(name = "Year", values = yearcols) + 
+     geom_col() +
+     annotate(geom = "text", x = 1, y = 0.9 * max(summarydf_year$nbr_editors), 
+              label = paste0("Total number\nof editors: ", tot_nbr_editors), 
+              hjust = 0, vjust = 1, size = 5) + 
+     scale_y_continuous(expand = c(0, 0)) + 
+     labs(x = "Publication year", y = "Number of editors") + 
+     theme_cowplot() + 
+     theme(legend.position = "none"))
+```
+
+# Number of new editors per year
+
+We next illustrate the number of editors that accept their first paper in a 
+given year, as well as what fraction this represents of the total number of 
+editors accepting a paper that year. Note that the data from 2024 only include 
+papers published until `r max(papers$published.date)`.
+
+```{r}
+#| label: plot-new-editors-per-year
+#| dev: ["png", "pdf"]
+
+ggplot(summarydf_year,
+       aes(x = pubyear, y = nbr_new_editors, fill = pubyear)) + 
+    scale_fill_manual(name = "Year", values = yearcols) + 
+    geom_col() +
+    geom_text(aes(label = frac_new_editors), vjust = -0.2) + 
+    scale_y_continuous(expand = expansion(mult = c(0, .1))) + 
+    labs(x = "", y = "Number of new editors and\npercentage of total number of editors") + 
+    theme_cowplot() + 
+    theme(legend.position = "none")
+
+## Combine - show both the total number of editors and the number of new ones
+ggplot(summarydf_year,
+       aes(x = pubyear, fill = pubyear)) + 
+    scale_fill_manual(name = "Year", values = yearcols) + 
+    geom_col(aes(y = nbr_editors), alpha = 0.25) +
+    geom_col(aes(y = nbr_new_editors)) + 
+    geom_text(aes(y = nbr_new_editors, label = frac_new_editors), vjust = -0.2) + 
+    scale_y_continuous(expand = c(0, 0)) + 
+    labs(x = "", y = "Number of new editors and\npercentage of total number of editors") + 
+    theme_cowplot() + 
+    theme(legend.position = "none")
+```
+
+# Number of reviewers per year
+
+Similarly to the number of editors above, the figure below shows the number 
+of reviewers reviewing at least one paper in a given year, as well as the total 
+number of reviews submitted in a year. Also here, the data from 2024 only 
+include papers published until `r max(papers$published.date)`.
+
+```{r}
+#| label: plot-reviewers-per-year
+#| dev: ["png", "pdf"]
+
+(gg_nbrreviewers <- ggplot(summarydf_year,
+                           aes(x = pubyear, y = nbr_reviewers)) + 
+        scale_fill_manual(name = "Year", values = yearcols) + 
+        geom_col(aes(fill = pubyear)) +
+        geom_line(aes(x = as.numeric(pubyear), y = nbr_reviews), color = "grey",
+                  linewidth = 1.5) + 
+        geom_point(aes(x = as.numeric(pubyear), y = nbr_reviews), color = "grey",
+                   size = 2.5) + 
+        geom_col(aes(fill = pubyear)) +
+        annotate(geom = "text", x = 1, y = 0.9 * max(summarydf_year$nbr_reviews), 
+                 label = paste0("Total number\nof reviewers: ", tot_nbr_reviewers), 
+                 hjust = 0, vjust = 1, size = 5) + 
+        scale_y_continuous(expand = expansion(mult = c(0, .05))) + 
+        labs(x = "Publication year", y = "Number of reviewers\nand reviews", 
+             caption = "Bars show number of unique reviewers,\ngrey line shows total number of reviews") + 
+        theme_cowplot() + 
+        theme(legend.position = "none"))
+```
+
+# Number of 'new' reviewers per year
+
+We also plot the number of reviewers reviewing their first paper in a given 
+year, and calculate what fraction of the total number of reviewers that year
+that this represents. As above, the data from 2024 only include papers 
+published until `r max(papers$published.date)`.
+
+```{r}
+#| label: plot-new-reviewers-per-year
+#| dev: ["png", "pdf"]
+
+ggplot(summarydf_year,
+       aes(x = pubyear, y = nbr_new_reviewers)) + 
+    scale_fill_manual(name = "Year", values = yearcols) + 
+    geom_col(aes(fill = pubyear)) +
+    geom_text(aes(label = frac_new_reviewers), vjust = -0.2) + 
+    scale_y_continuous(expand = expansion(mult = c(0, .1))) + 
+    labs(x = "", y = "Number of first-time reviewers and\npercentage of total number of reviewers") + 
+    theme_cowplot() + 
+    theme(legend.position = "none")
+```
+
+# Number of reviewers per submission
+
+Here we illustrate the distribution of the number of reviewers assigned to each 
+submission, over time. We exclude submissions that have already been 
+reviewed at `rOpenSci` or `pyOpenSci`, since they are not re-reviewed at 
+JOSS. 
+
+```{r}
+#| label: plot-reviewers-per-submission
+#| dev: ["png", "pdf"]
+
+nrev <- papers |>
+    dplyr::filter(!grepl("rOpenSci|pyOpenSci", prerev_labels)) |>
+    dplyr::select(pubyear, title, nbr_reviewers, doi)
+(gg_nrevpersub <- ggplot(
+    nrev, aes(x = nbr_reviewers, 
+              fill = forcats::fct_relevel(pubyear, 
+                                          rev(levels(pubyear))))) + 
+        geom_bar() + 
+        scale_fill_manual(values = yearcols, name = "Year") + 
+        scale_y_continuous(expand = c(0, 0)) + 
+        labs(x = "Number of reviewers per submissions", y = "Number of submissions",
+             caption = "Submissions reviewed via rOpenSci/pyOpenSci are excluded") + 
+        theme_cowplot() + 
+        theme(legend.position = "none"))
+```
+
+Since 2020, all papers are reviewed by at least two reviewers. The handful of 
+exceptions represent two addendum papers and three cases where 
+the editor replaced one reviewer who dropped out during the process. 
+
+```{r}
+#| label: one-review-only
+#| eval: false
+#| echo: false
+
+DT::datatable(
+    nrev |>
+        dplyr::filter(pubyear %in% c(2020, 2021, 2022, 2023, 2024) & nbr_reviewers < 2) |>
+        as.data.frame() |>
+        arrange(pubyear),
+    escape = FALSE, rownames = FALSE, 
+    filter = list(position = 'top', clear = FALSE),
+    options = list(scrollX = TRUE)
+)
+```
+
+# Time in review
+
+In these plots we investigate how the time a submission spends in the 
+pre-review or review stage (or their sum) has changed over time. The curve 
+corresponds to a rolling median for submissions over 120 days. 
+
+```{r}
+#| label: smoothing-helpers
+
+## Helper functions (modified from https://stackoverflow.com/questions/65147186/geom-smooth-with-median-instead-of-mean)
+rolling_median <- function(formula, data, xwindow = 120, ...) {
+    ## Get order of x-values and sort x/y
+    ordr <- order(data$x)
+    x <- data$x[ordr]
+    y <- data$y[ordr]
+    
+    ## Initialize vector for smoothed y-values
+    ys <- rep(NA, length(x))
+    ## Calculate median y-value for each unique x-value
+    for (xs in setdiff(unique(x), NA)) {
+        ## Get x-values in the window, and calculate median of corresponding y
+        j <- ((xs - xwindow/2) < x) & (x < (xs + xwindow/2))
+        ys[x == xs] <- median(y[j], na.rm = TRUE)
+    }
+    y <- ys
+    structure(list(x = x, y = y, f = approxfun(x, y)), class = "rollmed")
+}
+
+predict.rollmed <- function(mod, newdata, ...) {
+    setNames(mod$f(newdata$x), newdata$x)
+}
+```
+
+```{r}
+#| label: summary-review-times
+
+data.frame(`Median number of days in pre-review` = 
+               round(median(papers$days_in_pre, na.rm = TRUE), 1),
+           `Mean number of days in pre-review` = 
+               round(mean(papers$days_in_pre, na.rm = TRUE), 1),
+           `Median number of days in review` = 
+               round(median(papers$days_in_rev, na.rm = TRUE), 1),
+           `Mean number of days in review` = 
+               round(mean(papers$days_in_rev, na.rm = TRUE), 1),
+           `Median number of days in pre-review + review` = 
+               round(median(papers$days_in_pre + 
+                                papers$days_in_rev, na.rm = TRUE), 1),
+           `Mean number of days in pre-review + review` = 
+               round(mean(papers$days_in_pre + 
+                              papers$days_in_rev, na.rm = TRUE), 1),
+           check.names = FALSE
+           ) |>
+    tidyr::pivot_longer(everything()) |>
+    kableExtra::kbl(col.names = NULL) |>
+    kableExtra::kable_styling()
+
+textannot <- paste0("Median time in:\n", 
+                    "Pre-review: ", 
+                    round(median(papers$days_in_pre, na.rm = TRUE), 1), " days\n",
+                    "Review: ",
+                    round(median(papers$days_in_rev, na.rm = TRUE), 1), " days\n",
+                    "Pre-review + review: ",
+                    round(median(papers$days_in_pre + 
+                                     papers$days_in_rev, na.rm = TRUE), 1), " days")
+```
+
+```{r}
+#| label: plot-review-time
+#| message: false
+#| warning: false
+#| dev: ["png", "pdf"]
+
+(gg_timeinrev <- ggplot(papers, aes(x = prerev_opened, 
+                                    y = as.numeric(days_in_pre) + as.numeric(days_in_rev),
+                                    color = pubyear)) + 
+        geom_point() +
+        annotate(geom = "text", x = as.Date("2016-10-01"), y = 950, 
+                 label = textannot, hjust = 0) + 
+        geom_smooth(formula = y ~ x, method = "rolling_median", 
+                    se = FALSE, method.args = list(xwindow = 120),
+                    color = "black") +
+        scale_color_manual(values = yearcols, name = "Year") + 
+        labs(x = "Date of pre-review opening", y = "Number of days in\npre-review + review") + 
+        theme_cowplot() + 
+        theme(legend.position = "none"))
+```
+
+# Number of comments per review issue
+
+Here, we count the number of comments made in the review GitHub issues for each 
+submission. We remove comments made by the editorial bot (user name `@whedon` 
+or `@editorialbot`). Note that issues opened in the software repositories 
+themselves, or comments therein, are not counted. 
+
+```{r}
+#| label: get-nbr-comments
+
+ncomments <- readRDS("review_issue_nbr_comments.rds")
+ncomments <- papers |>
+    select(alternative.id, review_issue_id) |>
+    left_join(ncomments, 
+              by = join_by(alternative.id, review_issue_id))
+ncomments_done <- ncomments |> 
+    filter(!is.na(nbr_comments_nobot))
+ncomments_todo <- ncomments |>
+    filter(is.na(nbr_comments_nobot))
+
+if (nrow(ncomments_todo) > 0) {
+    ## Based on code from https://github.com/jennybc/analyze-github-stuff-with-r
+    ncomments <- ncomments_todo %>%
+        dplyr::slice(1:25) %>%
+        mutate(res = review_issue_id %>% map(
+            ~ gh(number = .x,
+                 endpoint = "/repos/openjournals/joss-reviews/issues/:number/comments",
+                 .limit = Inf))) %>%
+        mutate(who = res %>% map(. %>% map_chr(c("user", "login")))) %>%
+        select(-res) %>%
+        mutate(nbr_comments = lengths(who),
+               nbr_comments_nobot = vapply(
+                   who, function(x) length(x[!x %in% c("whedon", "editorialbot")]), NA_integer_))
+    saveRDS(bind_rows(ncomments_done, ncomments), 
+            file = "review_issue_nbr_comments.rds")
+}
+```
+
+
+```{r}
+#| label: plot-comments-per-issue
+#| dev: ["png", "pdf"]
+
+ncomments <- readRDS("review_issue_nbr_comments.rds")
+
+(gg_nbrcomments <- ggplot(
+    papers |>
+        left_join(ncomments,
+                  by = join_by(alternative.id, review_issue_id)), 
+    aes(x = nbr_comments_nobot, y = pubyear)) + 
+        geom_density_ridges(aes(fill = pubyear)) + 
+        scale_fill_manual(values = yearcols, name = "Year") + 
+        labs(x = "Number of comments (not by bot) in review issue", y = "") + 
+        theme_cowplot() + 
+        theme(legend.position = "none"))
+```
+
+# Citation statistics
+
+Finally, we calculate some statistics related to the citation of JOSS papers. 
+This information has been retrieved from `OpenAlex`, using the `openalexR` R 
+package. 
+
+## All papers
+
+```{r}
+#| label: citation-all
+#| results: hold
+
+## All papers
+tmp <- papers$citation_count
+cat("Number of papers: ", length(tmp), "\n")
+cat("Number of citations: ", sum(tmp, na.rm = TRUE), "\n")
+cat("Summary statistics: \n")
+summary(tmp)
+```
+
+The most cited paper: 
+
+```{r}
+#| label: most-cited
+
+maxcit <- which.max(papers$citation_count)
+cat(paste0(papers$author[maxcit][[1]]$family[1], " et al (", 
+           papers$pubyear[maxcit], "): ", papers$title[maxcit], 
+           " (", papers$citation_count[maxcit], " citations)"))
+```
+
+## Papers published in 2016-2023
+
+```{r}
+#| label: citation-sub
+#| results: hold
+
+## Papers published in 2016-2023
+tmp <- papers$citation_count[papers$pubyear %in% c(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023)]
+cat("Number of papers: ", length(tmp), "\n")
+cat("Number of citations: ", sum(tmp, na.rm = TRUE), "\n")
+cat("Summary statistics: \n")
+summary(tmp)
+```
+
+## Compare to SoftwareX papers published in 2016-2023
+
+```{r}
+#| label: citation-softwarex
+#| results: hold
+#| message: false
+#| warning: false
+
+softwarex <- oa_fetch(entity = "works", 
+                      primary_location.source.id = "s2506067282") |>
+    dplyr::mutate(pubyear = year(as.Date(publication_date)))
+tmp <- softwarex$cited_by_count[softwarex$pubyear %in% c(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023)]
+cat("Number of papers: ", length(tmp), "\n")
+cat("Number of citations: ", sum(tmp, na.rm = TRUE), "\n")
+cat("Summary statistics: \n")
+summary(tmp)
+```
+
+
+# Put together final figures
+
+```{r}
+#| label: get-legend-helpers
+
+## Overwrite the get_legend function from cowplot temporarily, 
+## since the cowplot one doesn't work with ggplot2 3.5.0
+## see https://github.com/wilkelab/cowplot/issues/202
+
+get_legend <- function(plot, legend = NULL) {
+    gt <- ggplotGrob(plot)
+    
+    pattern <- "guide-box"
+    if (!is.null(legend)) {
+        pattern <- paste0(pattern, "-", legend)
+    }
+    
+    indices <- grep(pattern, gt$layout$name)
+    
+    not_empty <- !vapply(
+        gt$grobs[indices], 
+        inherits, what = "zeroGrob", 
+        FUN.VALUE = logical(1)
+    )
+    indices <- indices[not_empty]
+    
+    if (length(indices) > 0) {
+        return(gt$grobs[[indices[1]]])
+    }
+    return(NULL)
+}
+```
+
+## Figure 1
+
+```{r}
+#| label: fig1
+#| fig.width: 12
+#| fig.height: 5
+#| message: false
+#| dev: ["png", "pdf"]
+
+gg1 <- gg_nbrpapers + gg_nbreditors + 
+    plot_annotation(tag_levels = "A", 
+                    caption = paste0("Includes data until ", max(papers$published.date))) + 
+    plot_layout(ncol = 2, guides = "collect") & 
+    theme(legend.position = "none",
+          plot.caption = element_text(size = 13))
+gg2 <- get_legend(gg_nbrpapers)
+plot_grid(gg1, gg2, ncol = 1, rel_heights = c(3.3, 0.7))
+```
+
+## Figure 3
+
+```{r}
+#| label: fig3
+#| fig.width: 12
+#| fig.height: 5
+#| message: false
+#| dev: ["png", "pdf"]
+
+gg1 <- gg_nrevpersub + gg_nbrreviewers + 
+    plot_annotation(tag_levels = "A", 
+                    caption = paste0("Includes data until ", max(papers$published.date))) + 
+    plot_layout(ncol = 2, guides = "collect") & 
+    theme(legend.position = "none",
+          plot.caption = element_text(size = 13))
+gg2 <- get_legend(gg_nbrpapers)
+plot_grid(gg1, gg2, ncol = 1, rel_heights = c(3.3, 0.7))
+```
+
+## Figure 4
+
+```{r}
+#| label: fig4
+#| fig.width: 12
+#| fig.height: 5
+#| message: false
+#| warning: false
+#| dev: ["png", "pdf"]
+
+gg1 <- gg_nbrcomments + gg_timeinrev + 
+    plot_annotation(tag_levels = "A", 
+                    caption = paste0("Includes data until ", max(papers$published.date))) + 
+    plot_layout(ncol = 2, guides = "collect") & 
+    theme(legend.position = "none",
+          plot.caption = element_text(size = 13))
+gg2 <- get_legend(gg_nbrpapers)
+plot_grid(gg1, gg2, ncol = 1, rel_heights = c(3.3, 0.7))
+```
+
+# Session info
+
+<details>
+<summary><b>
+Session info
+</b></summary>
+```{r}
+#| echo: false
+#| label: session_info
+
+sessionInfo()
+```
+</details>
+
+
