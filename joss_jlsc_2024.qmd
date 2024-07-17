@@ -516,9 +516,33 @@ ncomments <- readRDS("review_issue_nbr_comments.rds")
         theme(legend.position = "none"))
 ```
 
+# Funding statement statistics
+
+We performed a manual check of all papers published in JOSS in 2023 to extract
+information about whether any acknowledgement of funding was made. Here we 
+summarize these numbers.
+
+```{r}
+#| label: funding-statement
+
+funding <- read.csv("joss_funding_statements_2023.csv")
+data.frame(`Funding acknowledgement present` = 
+               length(which(funding$has.funding.statement == "yes")),
+           `No funding acknowledgement` = 
+               length(which(funding$has.funding.statement == "no")),
+           `Unclear` = 
+               length(which(!funding$has.funding.statement %in% c("yes", "no"))),
+           check.names = FALSE) |>
+    tidyr::pivot_longer(everything()) |>
+    kableExtra::kbl(col.names = NULL) |>
+    kableExtra::kable_styling()
+```
+
+
 # Citation statistics
 
-Finally, we calculate some statistics related to the citation of JOSS papers. 
+Finally, we calculate some statistics related to the citation of JOSS and 
+SoftwareX papers. 
 This information has been retrieved from `OpenAlex`, using the `openalexR` R 
 package. 
 
