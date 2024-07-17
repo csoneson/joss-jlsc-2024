@@ -1,3 +1,17 @@
 *.xlsx
 *~
 .ipynb_checkpoints/*
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.gitignore
+.DS_Store
+JOSSpaper2024.Rproj
+*.docx
+removed_code.R
+*.html.md
+joss_jlsc_2024_files/libs/
+joss_jlsc_2024_files/figure-html/*.pdf
+JOSS_pub_data_crowdsourcing_gsheet_*
+clean_funding_statement_file.R
