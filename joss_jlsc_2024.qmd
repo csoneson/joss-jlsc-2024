@@ -561,17 +561,48 @@ cat("Summary statistics: \n")
 summary(tmp)
 ```
 
-## Compare to SoftwareX papers published in 2016-2023
+## SoftwareX papers
 
 ```{r}
-#| label: citation-softwarex
+#| label: get-softwarex
+
+if (params$pull_data) {
+    softwarex <- oa_fetch(entity = "works", 
+                          primary_location.source.id = "s2506067282") |>
+        dplyr::mutate(pubyear = year(as.Date(publication_date))) |>
+        dplyr::filter(type == "article")
+    saveRDS(softwarex |> 
+                select(id, doi, title, publication_date, so, pubyear, 
+                       cited_by_count) |>
+                mutate(query_date = today()),
+            file = "openalex_softwarex.rds")
+}
+softwarex <- readRDS("openalex_softwarex.rds")
+```
+
+### All papers
+
+```{r}
+#| label: citation-softwarex-all
 #| results: hold
 #| message: false
 #| warning: false
 
-softwarex <- oa_fetch(entity = "works", 
-                      primary_location.source.id = "s2506067282") |>
-    dplyr::mutate(pubyear = year(as.Date(publication_date)))
+tmp <- softwarex$cited_by_count
+cat("Number of papers: ", length(tmp), "\n")
+cat("Number of citations: ", sum(tmp, na.rm = TRUE), "\n")
+cat("Summary statistics: \n")
+summary(tmp)
+```
+
+### Papers published in 2016-2023
+
+```{r}
+#| label: citation-softwarex-sub
+#| results: hold
+#| message: false
+#| warning: false
+
 tmp <- softwarex$cited_by_count[softwarex$pubyear %in% c(2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023)]
 cat("Number of papers: ", length(tmp), "\n")
 cat("Number of citations: ", sum(tmp, na.rm = TRUE), "\n")
