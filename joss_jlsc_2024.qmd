@@ -494,7 +494,7 @@ if (nrow(ncomments_todo) > 0) {
                    who, function(x) length(x[!x %in% c("whedon", "editorialbot")]), NA_integer_))
     saveRDS(bind_rows(ncomments_done, ncomments), 
             file = "review_issue_nbr_comments.rds")
-    write.csv(ncomments |> select(-who), 
+    write.csv(bind_rows(ncomments_done, ncomments) |> select(-who), 
               file = "review_issue_nbr_comments.csv", 
               row.names = FALSE)
 }
