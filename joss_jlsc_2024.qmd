@@ -40,6 +40,7 @@ suppressPackageStartupMessages({
     library(purrr)
     library(gh)
     library(openalexR)
+    library(countrycode)
 })
 ```
 
@@ -537,6 +538,56 @@ data.frame(`Funding acknowledgement present` =
                length(which(!funding$has.funding.statement %in% c("yes", "no"))),
            check.names = FALSE) |>
     tidyr::pivot_longer(everything()) |>
+    kableExtra::kbl(col.names = NULL) |>
+    kableExtra::kable_styling()
+```
+
+# Author affiliation statistics
+
+We also manually extracted information about the author affiliation countries 
+for all papers published in JOSS in 2023. Here we summarize this information.
+In the tables below, `n` represents the number of papers with at least one 
+author from the country or region, respectively.
+
+```{r}
+#| label: affiliation-data
+
+affcountries <- read.csv("joss_affiliation_statements_2023.csv")
+
+affcountries <- affcountries |> select(alternative.id, affiliation.countries) |> 
+    filter(!affiliation.countries %in% c("(none, no affiliation)", "unknown", "")) |>
+    separate_rows(affiliation.countries, sep = ",") |> 
+    mutate(affiliation.countries = trimws(affiliation.countries)) |>
+    distinct() |> 
+    mutate(region = countrycode::countrycode(affiliation.countries,
+                                             origin = "country.name",
+                                             destination = "region"))
+```
+
+## Countries
+
+```{r}
+#| label: affiliation-country
+
+## Top countries (in terms of number of papers with at least one author from there)
+affcountries |>
+    group_by(affiliation.countries) |> 
+    summarize(n = length(unique(alternative.id))) |> 
+    arrange(desc(n)) |>
+    kableExtra::kbl(col.names = NULL) |>
+    kableExtra::kable_styling()
+```
+
+## Regions
+
+```{r}
+#| label: affiliation-region
+
+## Similarly, top regions
+affcountries |>
+    group_by(region) |> 
+    summarize(n = length(unique(alternative.id))) |> 
+    arrange(desc(n)) |> 
     kableExtra::kbl(col.names = NULL) |>
     kableExtra::kable_styling()
 ```
